@@ -89,10 +89,10 @@ function initializeDefaultState() {
 
 function hydrateState(payload) {
   initializeDefaultState();
-  state.votes = { ...state.votes, ...(payload.votes || {}) };
+  state.votes = sanitizeVotes({ ...state.votes, ...(payload.votes || {}) });
   state.submissions = payload.submissions || {};
-  state.teams = payload.teams || [];
-  state.activeTeamCount = payload.activeTeamCount || payload.teams?.length || 0;
+  state.teams = sanitizeTeams(payload.teams || []);
+  state.activeTeamCount = state.teams.length;
 }
 
 function createEmptyPayload() {
@@ -132,13 +132,13 @@ function createDataStore() {
 
         rows.forEach((row) => {
           if (row.key === ASSIGNMENTS_KEY) {
-            payload.teams = row.payload?.teams || [];
-            payload.activeTeamCount = row.payload?.activeTeamCount || payload.teams.length || 0;
+            payload.teams = sanitizeTeams(row.payload?.teams || []);
+            payload.activeTeamCount = payload.teams.length;
             return;
           }
 
           if (payload.votes[row.key] !== undefined) {
-            payload.votes[row.key] = row.payload?.slotIds || [];
+            payload.votes[row.key] = sanitizeSlotIds(row.payload?.slotIds || []);
             if (row.payload?.submittedAt || row.payload?.updatedAt) {
               payload.submissions[row.key] = {
                 submittedAt: row.payload?.submittedAt || row.payload?.updatedAt,
@@ -219,7 +219,7 @@ async function syncCurrentVote(showSuccess) {
     state.teams = [];
     state.activeTeamCount = 0;
     await dataStore.saveVote(state.currentUserId, {
-      slotIds: state.votes[state.currentUserId] || [],
+      slotIds: sanitizeSlotIds(state.votes[state.currentUserId] || []),
       submittedAt: submission?.submittedAt || null,
       updatedAt: submission?.updatedAt || null,
       name: getCurrentUser().name,
@@ -879,7 +879,25 @@ function groupSlotsByDate() {
 }
 
 function sortSlotIds(slotIds) {
-  return slotIds.slice().sort((a, b) => slotDateValue(a) - slotDateValue(b));
+  return sanitizeSlotIds(slotIds).slice().sort((a, b) => slotDateValue(a) - slotDateValue(b));
+}
+
+function sanitizeSlotIds(slotIds) {
+  const validSlotIds = new Set(state.slots.map((slot) => slot.id));
+  return (slotIds || []).filter((slotId) => validSlotIds.has(slotId));
+}
+
+function sanitizeVotes(votes) {
+  const nextVotes = {};
+  Object.entries(votes || {}).forEach(([userId, slotIds]) => {
+    nextVotes[userId] = sanitizeSlotIds(slotIds || []);
+  });
+  return nextVotes;
+}
+
+function sanitizeTeams(teams) {
+  const validSlotIds = new Set(state.slots.map((slot) => slot.id));
+  return (teams || []).filter((team) => validSlotIds.has(team.slotId));
 }
 
 function slotDateValue(slotId) {

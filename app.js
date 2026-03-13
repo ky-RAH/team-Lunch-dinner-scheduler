@@ -12,7 +12,7 @@ const TEAM_MEMBERS = [
   "염윤아",
   "윤가영",
   "윤효주",
-  "이제규",
+  "이재규",
   "정연정",
   "강승아",
   "고유미",
@@ -538,7 +538,10 @@ function renderAssignmentSection() {
                 <h3>미배정 인원</h3>
                 ${
                   unassignedUsers.length
-                    ? `<div class="chips">${unassignedUsers.map((user) => `<span class="member-chip mismatch">${user.name}</span>`).join("")}</div>`
+                    ? `
+                      <p class="mini">2인 이상 같은 슬롯이 형성되지 않아 아직 팀으로 묶이지 않은 인원입니다.</p>
+                      <div class="chips">${unassignedUsers.map((user) => `<span class="member-chip mismatch">${user.name}</span>`).join("")}</div>
+                    `
                     : '<p class="mini">미배정 인원이 없습니다.</p>'
                 }
               </div>

@@ -489,6 +489,7 @@ function renderVoteSection() {
 function renderAssignmentSection() {
   const score = assignmentScore();
   const topSlots = getTopSlots(8);
+  const unassignedUsers = getUnassignedSubmittedUsers();
 
   return `
     <section class="panel" style="${state.currentView === "assignment" ? "" : "display:none"}">
@@ -532,6 +533,14 @@ function renderAssignmentSection() {
                     })
                     .join("")}
                 </div>
+              </div>
+              <div class="panel" style="margin-top:18px">
+                <h3>미배정 인원</h3>
+                ${
+                  unassignedUsers.length
+                    ? `<div class="chips">${unassignedUsers.map((user) => `<span class="member-chip mismatch">${user.name}</span>`).join("")}</div>`
+                    : '<p class="mini">미배정 인원이 없습니다.</p>'
+                }
               </div>
             `
             : '<p class="mini">아직 편성 결과가 없습니다. 투표 저장 후 자동 편성 실행을 눌러 주세요.</p>'
@@ -919,14 +928,20 @@ function assignmentScore() {
     return { summary: "자동 편성 전" };
   }
 
+  const submittedUsers = state.users.filter((user) => state.submissions[user.id] && (state.votes[user.id] || []).length > 0);
   const assignedUserIds = state.teams.flatMap((team) => team.memberIds);
   const matched = state.teams.reduce((total, team) => {
     return total + team.memberIds.filter((memberId) => (state.votes[memberId] || []).includes(team.slotId)).length;
   }, 0);
 
   return {
-    summary: `${state.activeTeamCount}팀 생성 / 희망 일정 일치 ${matched}/${assignedUserIds.length}`,
+    summary: `${state.activeTeamCount}팀 생성 / 배정 ${assignedUserIds.length}/${submittedUsers.length}명 / 희망 일정 일치 ${matched}/${assignedUserIds.length}`,
   };
+}
+
+function getUnassignedSubmittedUsers() {
+  const assignedIds = new Set(state.teams.flatMap((team) => team.memberIds));
+  return state.users.filter((user) => state.submissions[user.id] && !assignedIds.has(user.id));
 }
 
 function renderTeamCard(team) {

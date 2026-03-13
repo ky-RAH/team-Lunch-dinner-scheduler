@@ -1,4 +1,5 @@
-const STORAGE_KEY = "team-dinner-scheduler-state-v2";
+const STORAGE_KEY = "team-dinner-scheduler-state-v3";
+const ASSIGNMENTS_KEY = "__assignments__";
 
 const TEAM_MEMBERS = [
   "김미령",
@@ -58,6 +59,11 @@ initializeDefaultState();
 init();
 
 async function init() {
+  const savedUserId = window.localStorage.getItem(`${STORAGE_KEY}:currentUserId`);
+  if (savedUserId) {
+    state.currentUserId = savedUserId;
+  }
+
   render();
 
   try {
@@ -78,25 +84,15 @@ function initializeDefaultState() {
   TEAM_MEMBERS.forEach((user) => {
     state.votes[user.id] = [];
   });
+  state.submissions = {};
 }
 
 function hydrateState(payload) {
   initializeDefaultState();
-  state.currentUserId = payload.currentUserId || state.currentUserId;
   state.votes = { ...state.votes, ...(payload.votes || {}) };
   state.submissions = payload.submissions || {};
   state.teams = payload.teams || [];
-  state.activeTeamCount = payload.activeTeamCount || 3;
-}
-
-function snapshotState() {
-  return {
-    currentUserId: state.currentUserId,
-    votes: state.votes,
-    submissions: state.submissions,
-    teams: state.teams,
-    activeTeamCount: state.activeTeamCount,
-  };
+  state.activeTeamCount = payload.activeTeamCount || payload.teams?.length || 0;
 }
 
 function createEmptyPayload() {
@@ -105,11 +101,10 @@ function createEmptyPayload() {
     votes[user.id] = [];
   });
   return {
-    currentUserId: TEAM_MEMBERS[0].id,
     votes,
     submissions: {},
     teams: [],
-    activeTeamCount: 3,
+    activeTeamCount: 0,
   };
 }
 
@@ -126,34 +121,61 @@ function createDataStore() {
       async load() {
         const { data, error } = await client
           .from(tableName)
-          .select("payload, updated_at")
-          .eq("key", SETTINGS.stateRowKey)
-          .maybeSingle();
+          .select("key, payload, updated_at");
 
         if (error) {
           throw new Error(`Supabase load failed: ${error.message}`);
         }
 
-        if (!data) {
-          const empty = createEmptyPayload();
-          await this.save(empty);
-          return empty;
-        }
+        const payload = createEmptyPayload();
+        const rows = data || [];
 
-        return data.payload || createEmptyPayload();
+        rows.forEach((row) => {
+          if (row.key === ASSIGNMENTS_KEY) {
+            payload.teams = row.payload?.teams || [];
+            payload.activeTeamCount = row.payload?.activeTeamCount || payload.teams.length || 0;
+            return;
+          }
+
+          if (payload.votes[row.key] !== undefined) {
+            payload.votes[row.key] = row.payload?.slotIds || [];
+            if (row.payload?.submittedAt || row.payload?.updatedAt) {
+              payload.submissions[row.key] = {
+                submittedAt: row.payload?.submittedAt || row.payload?.updatedAt,
+                updatedAt: row.payload?.updatedAt || row.payload?.submittedAt,
+              };
+            }
+          }
+        });
+
+        return payload;
       },
-      async save(payload) {
+      async saveVote(userId, votePayload) {
         const { error } = await client.from(tableName).upsert(
           {
-            key: SETTINGS.stateRowKey,
-            payload,
+            key: userId,
+            payload: votePayload,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "key" }
         );
 
         if (error) {
-          throw new Error(`Supabase save failed: ${error.message}`);
+          throw new Error(`Supabase vote save failed: ${error.message}`);
+        }
+      },
+      async saveAssignments(assignmentPayload) {
+        const { error } = await client.from(tableName).upsert(
+          {
+            key: ASSIGNMENTS_KEY,
+            payload: assignmentPayload,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "key" }
+        );
+
+        if (error) {
+          throw new Error(`Supabase assignment save failed: ${error.message}`);
         }
       },
     };
@@ -165,19 +187,48 @@ function createDataStore() {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       return raw ? JSON.parse(raw) : createEmptyPayload();
     },
-    async save(payload) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    async saveVote(userId, votePayload) {
+      const current = await this.load();
+      current.votes[userId] = votePayload.slotIds || [];
+      if (votePayload.submittedAt || votePayload.updatedAt) {
+        current.submissions[userId] = {
+          submittedAt: votePayload.submittedAt || votePayload.updatedAt,
+          updatedAt: votePayload.updatedAt || votePayload.submittedAt,
+        };
+      } else {
+        delete current.submissions[userId];
+      }
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+    },
+    async saveAssignments(assignmentPayload) {
+      const current = await this.load();
+      current.teams = assignmentPayload.teams || [];
+      current.activeTeamCount = assignmentPayload.activeTeamCount || current.teams.length || 0;
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
     },
   };
 }
 
-async function syncState(showSuccess) {
+async function syncCurrentVote(showSuccess) {
   state.saving = true;
   state.error = "";
   render();
 
   try {
-    await dataStore.save(snapshotState());
+    const submission = state.submissions[state.currentUserId];
+    state.teams = [];
+    state.activeTeamCount = 0;
+    await dataStore.saveVote(state.currentUserId, {
+      slotIds: state.votes[state.currentUserId] || [],
+      submittedAt: submission?.submittedAt || null,
+      updatedAt: submission?.updatedAt || null,
+      name: getCurrentUser().name,
+    });
+    await dataStore.saveAssignments({
+      teams: [],
+      activeTeamCount: 0,
+    });
+    await reloadSharedState(true);
     state.lastSyncedAt = new Date().toISOString();
     state.dirty = false;
     if (showSuccess) {
@@ -191,11 +242,12 @@ async function syncState(showSuccess) {
   }
 }
 
-async function reloadSharedState() {
-  state.loading = true;
-  state.error = "";
-  render();
-
+async function reloadSharedState(skipLoadingUi = false) {
+  if (!skipLoadingUi) {
+    state.loading = true;
+    state.error = "";
+    render();
+  }
   try {
     const remoteState = await dataStore.load();
     hydrateState(remoteState);
@@ -204,7 +256,33 @@ async function reloadSharedState() {
   } catch (error) {
     state.error = error.message || "새로고침에 실패했습니다.";
   } finally {
-    state.loading = false;
+    if (!skipLoadingUi) {
+      state.loading = false;
+    }
+    render();
+  }
+}
+
+async function syncAssignments(showSuccess) {
+  state.saving = true;
+  state.error = "";
+  render();
+
+  try {
+    await dataStore.saveAssignments({
+      teams: state.teams,
+      activeTeamCount: state.activeTeamCount,
+    });
+    await reloadSharedState(true);
+    state.lastSyncedAt = new Date().toISOString();
+    state.dirty = false;
+    if (showSuccess) {
+      window.alert("저장되었습니다.");
+    }
+  } catch (error) {
+    state.error = error.message || "편성 저장에 실패했습니다.";
+  } finally {
+    state.saving = false;
     render();
   }
 }
@@ -429,7 +507,7 @@ function renderAssignmentSection() {
         <div class="panel-header">
           <div>
             <h3>편성 결과</h3>
-            <p class="muted">3팀 우선 시도 후 조건이 부족하면 4팀으로 자동 전환됩니다.</p>
+            <p class="muted">빠른 날짜순으로 2인 이상 모인 슬롯을 팀으로 인정하고, 최대 4개 팀까지 만듭니다.</p>
           </div>
           <span class="tag">${score.summary}</span>
         </div>
@@ -597,7 +675,7 @@ function bindVoteEvents() {
   if (select) {
     select.addEventListener("change", (event) => {
       state.currentUserId = event.target.value;
-      state.dirty = true;
+      window.localStorage.setItem(`${STORAGE_KEY}:currentUserId`, state.currentUserId);
       render();
     });
   }
@@ -647,7 +725,7 @@ function bindVoteEvents() {
         submittedAt: previous?.submittedAt || now,
         updatedAt: now,
       };
-      await syncState(true);
+      await syncCurrentVote(true);
     });
   }
 
@@ -658,7 +736,7 @@ function bindVoteEvents() {
       delete state.submissions[state.currentUserId];
       state.teams = [];
       state.dirty = true;
-      await syncState(false);
+      await syncCurrentVote(false);
     });
   }
 }
@@ -671,7 +749,7 @@ function bindAssignmentEvents() {
       state.teams = result.teams;
       state.activeTeamCount = result.teamCount;
       state.dirty = true;
-      await syncState(false);
+      await syncAssignments(false);
     });
   }
 
@@ -679,10 +757,10 @@ function bindAssignmentEvents() {
   if (resetButton) {
     resetButton.addEventListener("click", async () => {
       state.teams = [];
-      state.activeTeamCount = 3;
+      state.activeTeamCount = 0;
       state.selectedUserId = null;
       state.dirty = true;
-      await syncState(false);
+      await syncAssignments(false);
     });
   }
 }
@@ -719,7 +797,7 @@ function bindManualEvents() {
   const saveManualButton = document.getElementById("save-manual");
   if (saveManualButton) {
     saveManualButton.addEventListener("click", async () => {
-      await syncState(true);
+      await syncAssignments(true);
     });
   }
 }
@@ -790,17 +868,11 @@ function getTopSlots(limit) {
 }
 
 function autoAssignTeams() {
-  return tryBuildTeams(3) || tryBuildTeams(4) || { teamCount: 4, teams: [] };
-}
-
-function tryBuildTeams(targetTeamCount) {
   const submittedUsers = state.users.filter((user) => state.submissions[user.id] && (state.votes[user.id] || []).length > 0);
   if (!submittedUsers.length) {
-    return { teamCount: targetTeamCount, teams: [] };
+    return { teamCount: 0, teams: [] };
   }
 
-  const minSize = Math.floor(submittedUsers.length / targetTeamCount);
-  const maxSize = Math.ceil(submittedUsers.length / targetTeamCount);
   const orderedSlots = [...state.slots].sort((a, b) => slotDateValue(a.id) - slotDateValue(b.id));
   const unassigned = new Set(
     submittedUsers
@@ -811,18 +883,18 @@ function tryBuildTeams(targetTeamCount) {
   const teams = [];
 
   for (const slot of orderedSlots) {
-    if (teams.length >= targetTeamCount) {
+    if (teams.length >= 4) {
       break;
     }
 
     const interested = Array.from(unassigned).filter((userId) => (state.votes[userId] || []).includes(slot.id));
-    if (interested.length < minSize) {
+    if (interested.length < 2) {
       continue;
     }
 
     const members = interested
       .sort((a, b) => submissionOrderValue(a) - submissionOrderValue(b))
-      .slice(0, maxSize);
+      .slice();
 
     members.forEach((userId) => unassigned.delete(userId));
 
@@ -834,21 +906,7 @@ function tryBuildTeams(targetTeamCount) {
     });
   }
 
-  if (teams.length < targetTeamCount) {
-    return null;
-  }
-
-  Array.from(unassigned)
-    .sort((a, b) => submissionOrderValue(a) - submissionOrderValue(b))
-    .forEach((userId) => {
-      const preferredTeam = teams.find(
-        (team) => team.memberIds.length < maxSize && (state.votes[userId] || []).includes(team.slotId)
-      );
-      const fallbackTeam = preferredTeam || teams.slice().sort((a, b) => a.memberIds.length - b.memberIds.length)[0];
-      fallbackTeam.memberIds.push(userId);
-    });
-
-  return { teamCount: targetTeamCount, teams };
+  return { teamCount: teams.length, teams };
 }
 
 function submissionOrderValue(userId) {
@@ -867,7 +925,7 @@ function assignmentScore() {
   }, 0);
 
   return {
-    summary: `${state.activeTeamCount}팀 / 희망 일정 일치 ${matched}/${assignedUserIds.length}`,
+    summary: `${state.activeTeamCount}팀 생성 / 희망 일정 일치 ${matched}/${assignedUserIds.length}`,
   };
 }
 

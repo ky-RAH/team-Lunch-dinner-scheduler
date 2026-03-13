@@ -13,6 +13,14 @@
   --radius-lg: 28px;
   --radius-md: 18px;
   --radius-sm: 12px;
+  --team-a: #be5b2d;
+  --team-a-soft: rgba(190, 91, 45, 0.12);
+  --team-b: #1d6a61;
+  --team-b-soft: rgba(29, 106, 97, 0.12);
+  --team-c: #285ea8;
+  --team-c-soft: rgba(40, 94, 168, 0.12);
+  --team-d: #7a4aa4;
+  --team-d-soft: rgba(122, 74, 164, 0.12);
 }
 
 * {
@@ -367,7 +375,7 @@ button.small {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .warning {
@@ -390,6 +398,66 @@ button.small {
 .danger-tag {
   background: rgba(164, 74, 34, 0.14);
   color: var(--warning);
+}
+
+.team-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.team-team-1,
+.team-badge.team-team-1 {
+  color: var(--team-a);
+  background: var(--team-a-soft);
+}
+
+.team-team-2,
+.team-badge.team-team-2 {
+  color: var(--team-b);
+  background: var(--team-b-soft);
+}
+
+.team-team-3,
+.team-badge.team-team-3 {
+  color: var(--team-c);
+  background: var(--team-c-soft);
+}
+
+.team-team-4,
+.team-badge.team-team-4 {
+  color: var(--team-d);
+  background: var(--team-d-soft);
+}
+
+.team-unassigned {
+  color: var(--warning);
+  background: rgba(164, 74, 34, 0.14);
+}
+
+.team-card-team-1 {
+  border-color: rgba(190, 91, 45, 0.22);
+}
+
+.team-card-team-2 {
+  border-color: rgba(29, 106, 97, 0.22);
+}
+
+.team-card-team-3 {
+  border-color: rgba(40, 94, 168, 0.22);
+}
+
+.team-card-team-4 {
+  border-color: rgba(122, 74, 164, 0.22);
+}
+
+.subtle-votes {
+  margin-top: 6px;
+  color: rgba(109, 98, 85, 0.78);
 }
 
 .assignment-card header,

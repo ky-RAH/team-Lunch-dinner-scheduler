@@ -526,10 +526,29 @@ function renderAssignmentSection() {
                   ${state.users
                     .map((user) => {
                       const assignment = findAssignmentForUser(user.id);
+                      const voteText = (state.votes[user.id] || []).length
+                        ? (state.votes[user.id] || []).map((slotId) => slotLabel(slotId)).join(", ")
+                        : "투표 없음";
                       return `
                         <div class="person-row">
-                          <div><strong>${user.name}</strong></div>
-                          <div class="mini">${assignment ? `${assignment.team.name} / ${slotLabel(assignment.slotId)}` : "미배정"}</div>
+                          <div>
+                            <strong>${user.name}</strong>
+                            <div class="mini">
+                              ${
+                                assignment
+                                  ? `<span class="team-badge team-${assignment.team.id}">${assignment.team.name}</span> ${slotLabel(assignment.slotId)}`
+                                  : '<span class="team-badge team-unassigned">미배정</span>'
+                              }
+                            </div>
+                            <div class="mini subtle-votes">희망 일정: ${voteText}</div>
+                          </div>
+                          <div class="mini">
+                            ${
+                              assignment
+                                ? `<span class="team-badge team-${assignment.team.id}">${assignment.team.name}</span>`
+                                : '<span class="team-badge team-unassigned">미배정</span>'
+                            }
+                          </div>
                         </div>
                       `;
                     })
@@ -953,7 +972,7 @@ function renderTeamCard(team) {
   const matchedCount = team.memberIds.filter((memberId) => (state.votes[memberId] || []).includes(team.slotId)).length;
 
   return `
-    <div class="assignment-card">
+    <div class="assignment-card team-card-${team.id}">
       <header>
         <div>
           <strong>${team.name}</strong>

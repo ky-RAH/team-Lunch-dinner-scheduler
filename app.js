@@ -27,7 +27,7 @@ const TEAM_MEMBERS = [
 }));
 
 const SETTINGS = {
-  startDate: "2026-03-16",
+  startDate: "2026-03-17",
   endDate: "2026-03-31",
   stateRowKey: "team-dinner-scheduler",
 };

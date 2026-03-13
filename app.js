@@ -510,7 +510,14 @@ function renderAssignmentSection() {
             <h3>편성 결과</h3>
             <p class="muted">빠른 날짜순으로 2인 이상 모인 슬롯을 팀으로 인정하고, 최대 4개 팀까지 만듭니다.</p>
           </div>
-          <span class="tag">${score.summary}</span>
+          <div class="inline-controls">
+            <span class="tag">${score.summary}</span>
+            ${
+              unassignedUsers.length
+                ? `<span class="tag danger-tag">미배정: ${unassignedUsers.map((user) => user.name).join(", ")}</span>`
+                : ""
+            }
+          </div>
         </div>
         ${
           state.teams.length

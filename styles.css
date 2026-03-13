@@ -387,6 +387,11 @@ button.small {
   font-weight: 700;
 }
 
+.danger-tag {
+  background: rgba(164, 74, 34, 0.14);
+  color: var(--warning);
+}
+
 .assignment-card header,
 .team-card header {
   display: flex;

@@ -508,7 +508,7 @@ function renderAssignmentSection() {
         <div class="panel-header">
           <div>
             <h3>편성 결과</h3>
-            <p class="muted">빠른 날짜순으로 2인 이상 모인 슬롯을 팀으로 인정하고, 최대 4개 팀까지 만듭니다.</p>
+            <p class="muted">2인 이상 모인 슬롯 조합 중 미배정을 최소화하고, 동률이면 더 이른 날짜 조합을 우선해 최대 4개 팀까지 만듭니다.</p>
           </div>
           <span class="tag ${unassignedUsers.length ? "danger-tag" : ""}">
             ${score.summary}${unassignedUsers.length ? ` / 미배정 ${unassignedUsers.map((user) => user.name).join(", ")}` : ""}
@@ -924,40 +924,18 @@ function autoAssignTeams() {
     return { teamCount: 0, teams: [] };
   }
 
-  const orderedSlots = [...state.slots].sort((a, b) => slotDateValue(a.id) - slotDateValue(b.id));
-  const unassigned = new Set(
-    submittedUsers
-      .slice()
-      .sort((a, b) => submissionOrderValue(a.id) - submissionOrderValue(b.id))
-      .map((user) => user.id)
-  );
-  const teams = [];
+  const candidateSlotIds = state.slots
+    .filter((slot) => {
+      const interestedCount = submittedUsers.filter((user) => (state.votes[user.id] || []).includes(slot.id)).length;
+      return interestedCount >= 2;
+    })
+    .map((slot) => slot.id);
 
-  for (const slot of orderedSlots) {
-    if (teams.length >= 4) {
-      break;
-    }
-
-    const interested = Array.from(unassigned).filter((userId) => (state.votes[userId] || []).includes(slot.id));
-    if (interested.length < 2) {
-      continue;
-    }
-
-    const members = interested
-      .sort((a, b) => submissionOrderValue(a) - submissionOrderValue(b))
-      .slice();
-
-    members.forEach((userId) => unassigned.delete(userId));
-
-    teams.push({
-      id: `team-${teams.length + 1}`,
-      name: `${String.fromCharCode(65 + teams.length)}팀`,
-      slotId: slot.id,
-      memberIds: members,
-    });
-  }
-
-  return { teamCount: teams.length, teams };
+  const best = chooseBestSlotCombination(candidateSlotIds, submittedUsers);
+  return {
+    teamCount: best.teams.length,
+    teams: best.teams,
+  };
 }
 
 function submissionOrderValue(userId) {
@@ -984,6 +962,78 @@ function assignmentScore() {
 function getUnassignedSubmittedUsers() {
   const assignedIds = new Set(state.teams.flatMap((team) => team.memberIds));
   return state.users.filter((user) => state.submissions[user.id] && !assignedIds.has(user.id));
+}
+
+function chooseBestSlotCombination(candidateSlotIds, submittedUsers) {
+  const orderedCandidates = candidateSlotIds
+    .slice()
+    .sort((a, b) => slotDateValue(a) - slotDateValue(b));
+
+  const combos = [];
+  for (let size = 1; size <= Math.min(4, orderedCandidates.length); size += 1) {
+    buildCombinations(orderedCandidates, size, 0, [], combos);
+  }
+
+  let best = { teams: [], assignedCount: 0, scoreKey: "" };
+
+  combos.forEach((combo) => {
+    const result = buildTeamsFromSlots(combo, submittedUsers);
+    const scoreKey = combo.map((slotId) => String(slotDateValue(slotId)).padStart(16, "0")).join("-");
+
+    const isBetter =
+      result.assignedCount > best.assignedCount ||
+      (result.assignedCount === best.assignedCount && result.teams.length > best.teams.length) ||
+      (result.assignedCount === best.assignedCount && result.teams.length === best.teams.length && scoreKey < best.scoreKey);
+
+    if (isBetter) {
+      best = { ...result, scoreKey };
+    }
+  });
+
+  return best;
+}
+
+function buildCombinations(items, size, startIndex, current, output) {
+  if (current.length === size) {
+    output.push(current.slice());
+    return;
+  }
+
+  for (let index = startIndex; index < items.length; index += 1) {
+    current.push(items[index]);
+    buildCombinations(items, size, index + 1, current, output);
+    current.pop();
+  }
+}
+
+function buildTeamsFromSlots(slotIds, submittedUsers) {
+  const orderedUsers = submittedUsers
+    .slice()
+    .sort((a, b) => submissionOrderValue(a.id) - submissionOrderValue(b.id));
+  const teams = slotIds
+    .slice()
+    .sort((a, b) => slotDateValue(a) - slotDateValue(b))
+    .map((slotId, index) => ({
+      id: `team-${index + 1}`,
+      name: `${String.fromCharCode(65 + index)}팀`,
+      slotId,
+      memberIds: [],
+    }));
+
+  orderedUsers.forEach((user) => {
+    const firstMatchingTeam = teams.find((team) => (state.votes[user.id] || []).includes(team.slotId));
+    if (firstMatchingTeam) {
+      firstMatchingTeam.memberIds.push(user.id);
+    }
+  });
+
+  const validTeams = teams.filter((team) => team.memberIds.length >= 2);
+  const assignedIds = new Set(validTeams.flatMap((team) => team.memberIds));
+
+  return {
+    teams: validTeams,
+    assignedCount: assignedIds.size,
+  };
 }
 
 function renderTeamCard(team) {

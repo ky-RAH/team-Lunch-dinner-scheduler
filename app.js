@@ -1,5 +1,6 @@
 const STORAGE_KEY = "team-dinner-scheduler-state-v3";
 const ASSIGNMENTS_KEY = "__assignments__";
+const PER_PERSON_BUDGET = 60000;
 
 const TEAM_MEMBERS = [
   "김미령",
@@ -43,8 +44,8 @@ const state = {
   slots: generateSlots(SETTINGS.startDate, SETTINGS.endDate),
   votes: {},
   submissions: {},
-  selectedUserId: null,
   teams: [],
+  expenses: {},
   activeTeamCount: 3,
   backendMode: "loading",
   lastSyncedAt: null,
@@ -85,6 +86,7 @@ function initializeDefaultState() {
     state.votes[user.id] = [];
   });
   state.submissions = {};
+  state.expenses = {};
 }
 
 function hydrateState(payload) {
@@ -92,6 +94,7 @@ function hydrateState(payload) {
   state.votes = sanitizeVotes({ ...state.votes, ...(payload.votes || {}) });
   state.submissions = payload.submissions || {};
   state.teams = sanitizeTeams(payload.teams || []);
+  state.expenses = sanitizeExpenses(payload.expenses || {}, state.teams);
   state.activeTeamCount = state.teams.length;
 }
 
@@ -104,6 +107,7 @@ function createEmptyPayload() {
     votes,
     submissions: {},
     teams: [],
+    expenses: {},
     activeTeamCount: 0,
   };
 }
@@ -119,9 +123,7 @@ function createDataStore() {
     return {
       modeLabel: "Supabase 공유 모드",
       async load() {
-        const { data, error } = await client
-          .from(tableName)
-          .select("key, payload, updated_at");
+        const { data, error } = await client.from(tableName).select("key, payload, updated_at");
 
         if (error) {
           throw new Error(`Supabase load failed: ${error.message}`);
@@ -133,6 +135,7 @@ function createDataStore() {
         rows.forEach((row) => {
           if (row.key === ASSIGNMENTS_KEY) {
             payload.teams = sanitizeTeams(row.payload?.teams || []);
+            payload.expenses = sanitizeExpenses(row.payload?.expenses || {}, payload.teams);
             payload.activeTeamCount = payload.teams.length;
             return;
           }
@@ -203,6 +206,7 @@ function createDataStore() {
     async saveAssignments(assignmentPayload) {
       const current = await this.load();
       current.teams = assignmentPayload.teams || [];
+      current.expenses = sanitizeExpenses(assignmentPayload.expenses || {}, current.teams);
       current.activeTeamCount = assignmentPayload.activeTeamCount || current.teams.length || 0;
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
     },
@@ -217,6 +221,7 @@ async function syncCurrentVote(showSuccess) {
   try {
     const submission = state.submissions[state.currentUserId];
     state.teams = [];
+    state.expenses = {};
     state.activeTeamCount = 0;
     await dataStore.saveVote(state.currentUserId, {
       slotIds: sanitizeSlotIds(state.votes[state.currentUserId] || []),
@@ -226,6 +231,7 @@ async function syncCurrentVote(showSuccess) {
     });
     await dataStore.saveAssignments({
       teams: [],
+      expenses: {},
       activeTeamCount: 0,
     });
     await reloadSharedState(true);
@@ -271,6 +277,7 @@ async function syncAssignments(showSuccess) {
   try {
     await dataStore.saveAssignments({
       teams: state.teams,
+      expenses: state.expenses,
       activeTeamCount: state.activeTeamCount,
     });
     await reloadSharedState(true);
@@ -305,7 +312,7 @@ function render() {
     ${renderStatusPanel()}
     ${renderVoteSection()}
     ${renderAssignmentSection()}
-    ${renderManualSection()}
+    ${renderExpenseSection()}
     <section class="footer-note">
       자동편성 규칙: 빠른 날짜 우선, 같은 슬롯 내 먼저 저장한 순서 우선, 3팀 우선 시도 후 실패 시 4팀으로 확장합니다.
     </section>
@@ -314,15 +321,16 @@ function render() {
   bindCommonEvents();
   bindVoteEvents();
   bindAssignmentEvents();
-  bindManualEvents();
+  bindExpenseEvents();
 }
 
 function renderHeroStats() {
   const summary = getSummary();
+  const overall = getOverallExpenseSummary();
   heroStatsEl.innerHTML = [
     statCard("대상 인원", `${state.users.length}명`),
     statCard("응답 완료", `${summary.completedCount}명`),
-    statCard("후보 슬롯", `${state.slots.length}개`),
+    statCard("남은 회식비", `${Math.floor(overall.remaining / 10000).toLocaleString("ko-KR")}만원`),
     statCard("저장 모드", state.backendMode === "loading" ? "-" : state.backendMode),
   ].join("");
 }
@@ -371,7 +379,7 @@ function renderViewToggle() {
   const buttons = [
     ["vote", "투표"],
     ["assignment", "자동편성"],
-    ["manual", "수동 조정"],
+    ["expense", "회식비 내역"],
   ];
 
   return `
@@ -440,26 +448,28 @@ function renderVoteSection() {
             </thead>
             <tbody>
               ${groupSlotsByDate()
-                .map(({ date, lunch, dinner }) => `
-                  <tr>
-                    <td>
-                      <strong>${formatDate(date)}</strong>
-                      <div class="mini">${weekdayLabel(date)}</div>
-                    </td>
-                    <td>
-                      <label class="slot-label">
-                        <input type="checkbox" data-slot="${lunch.id}" ${userVote.includes(lunch.id) ? "checked" : ""} />
-                        점심
-                      </label>
-                    </td>
-                    <td>
-                      <label class="slot-label">
-                        <input type="checkbox" data-slot="${dinner.id}" ${userVote.includes(dinner.id) ? "checked" : ""} />
-                        저녁
-                      </label>
-                    </td>
-                  </tr>
-                `)
+                .map(
+                  ({ date, lunch, dinner }) => `
+                    <tr>
+                      <td>
+                        <strong>${formatDate(date)}</strong>
+                        <div class="mini">${weekdayLabel(date)}</div>
+                      </td>
+                      <td>
+                        <label class="slot-label">
+                          <input type="checkbox" data-slot="${lunch.id}" ${userVote.includes(lunch.id) ? "checked" : ""} />
+                          점심
+                        </label>
+                      </td>
+                      <td>
+                        <label class="slot-label">
+                          <input type="checkbox" data-slot="${dinner.id}" ${userVote.includes(dinner.id) ? "checked" : ""} />
+                          저녁
+                        </label>
+                      </td>
+                    </tr>
+                  `
+                )
                 .join("")}
             </tbody>
           </table>
@@ -608,80 +618,125 @@ function renderAssignmentSection() {
   `;
 }
 
-function renderManualSection() {
-  const assignedIds = new Set(state.teams.flatMap((team) => team.memberIds));
-  const unassignedUsers = state.users.filter((user) => !assignedIds.has(user.id));
+function renderExpenseSection() {
+  const overall = getOverallExpenseSummary();
 
   return `
-    <section class="panel" style="${state.currentView === "manual" ? "" : "display:none"}">
+    <section class="panel" style="${state.currentView === "expense" ? "" : "display:none"}">
       <div class="panel-header">
         <div>
-          <h2>수동 조정</h2>
-          <p class="muted">자동 편성 뒤 인원을 수동으로 이동할 수 있습니다.</p>
-        </div>
-        <div class="inline-controls">
-          <button class="ghost" id="save-manual" ${state.saving ? "disabled" : ""}>수동 조정 저장</button>
+          <h2>회식비 내역</h2>
+          <p class="muted">편성된 팀별로 회식비를 누적 입력하고, 영수증 사진과 함께 남은 예산을 확인합니다.</p>
         </div>
       </div>
+
+      <div class="summary-grid">
+        <div class="summary-row">
+          <strong>전체 회식비</strong>
+          <span>${state.users.length}명 x 6만원 = ${formatCurrency(overall.totalBudget)}</span>
+        </div>
+        <div class="summary-row">
+          <strong>누적 사용 금액</strong>
+          <span>${formatCurrency(overall.totalSpent)}</span>
+        </div>
+        <div class="summary-row">
+          <strong>${overall.remaining >= 0 ? "남은 회식비" : "초과된 회식비"}</strong>
+          <span class="${overall.remaining >= 0 ? "" : "warning"}">${formatCurrency(Math.abs(overall.remaining))}</span>
+        </div>
+      </div>
+
       ${
         state.teams.length
           ? `
-            <div class="manual-grid">
-              <div class="list-card">
-                <h3>팀원 선택</h3>
-                <div class="person-list">
-                  ${state.users
-                    .map(
-                      (user) => `
-                        <button class="${state.selectedUserId === user.id ? "secondary" : "ghost"}" data-pick-user="${user.id}">
-                          ${user.name}${assignedIds.has(user.id) ? "" : " (미배정)"}
-                        </button>
-                      `
-                    )
-                    .join("")}
-                </div>
-                <p class="mini" style="margin-top:12px">현재 선택: ${state.selectedUserId ? userName(state.selectedUserId) : "없음"}</p>
-                <p class="${unassignedUsers.length ? "warning" : "mini"}">
-                  ${
-                    unassignedUsers.length
-                      ? `미배정 인원 ${unassignedUsers.length}명`
-                      : "모든 인원이 팀에 배정되어 있습니다."
-                  }
-                </p>
-              </div>
-              <div class="team-grid">
-                ${state.teams
-                  .map(
-                    (team) => `
-                      <div class="team-card manual-team-card">
-                        <header>
-                          <div>
-                            <strong>${team.name}</strong>
-                            <div class="mini">${slotLabel(team.slotId)}</div>
-                          </div>
-                          <span>${team.memberIds.length}명</span>
-                        </header>
-                        <div class="team-members">
-                          ${team.memberIds
-                            .map((memberId) => {
-                              const mismatch = !(state.votes[memberId] || []).includes(team.slotId);
-                              return `<span class="member-chip ${mismatch ? "mismatch" : ""}">${userName(memberId)}</span>`;
-                            })
-                            .join("")}
+            <div class="expense-grid" style="margin-top:18px">
+              ${state.teams
+                .map((team) => {
+                  const summary = getTeamExpenseSummary(team);
+                  const records = getTeamExpenseRecords(team.id);
+
+                  return `
+                    <div class="team-card expense-card team-card-${team.id}">
+                      <div class="team-inline-summary">
+                        <strong>${team.name}</strong>
+                        <span>${team.memberIds.length}명</span>
+                        <span>(${team.memberIds.map((memberId) => userName(memberId)).join(", ")})</span>
+                        <span>${slotLabel(team.slotId)}</span>
+                      </div>
+                      <div class="expense-summary-stack">
+                        <div class="summary-row compact-summary-row">
+                          <strong>총액</strong>
+                          <span>${formatCurrency(summary.teamBudget)}</span>
                         </div>
-                        <div class="allocation-controls">
-                          <button class="secondary" data-add-to-team="${team.id}" ${state.selectedUserId ? "" : "disabled"}>
-                            선택 인원 추가
-                          </button>
+                        <div class="summary-row compact-summary-row">
+                          <strong>사용</strong>
+                          <span>${formatCurrency(summary.spent)}</span>
+                        </div>
+                        <div class="summary-row compact-summary-row">
+                          <strong>${summary.remaining >= 0 ? "남음" : "초과"}</strong>
+                          <span class="${summary.remaining >= 0 ? "" : "warning"}">${formatCurrency(Math.abs(summary.remaining))}</span>
                         </div>
                       </div>
-                    `
-                  )
-                  .join("")}
-              </div>
+
+                      <div class="expense-entry-form">
+                        <label>
+                          사용 금액
+                          <input type="number" min="0" step="1000" placeholder="예: 185000" data-expense-amount="${team.id}" />
+                        </label>
+                        <label>
+                          영수증 사진
+                          <input type="file" accept="image/*" data-expense-receipt="${team.id}" />
+                        </label>
+                        <button class="primary" data-add-expense="${team.id}" ${state.saving ? "disabled" : ""}>회식비 추가</button>
+                      </div>
+
+                      <div class="expense-records">
+                        <h4>사용 내역</h4>
+                        ${
+                          records.length
+                            ? records
+                                .map(
+                                  (record) => `
+                                    <div class="expense-record">
+                                      <div class="expense-record-header">
+                                        <div>
+                                          <strong>${formatCurrency(record.amount)}</strong>
+                                          <div class="mini">${formatDateTime(record.createdAt)}</div>
+                                        </div>
+                                        <button class="ghost small" data-delete-expense="${team.id}:${record.id}">삭제</button>
+                                      </div>
+                                      ${
+                                        record.receiptDataUrl
+                                          ? `
+                                            <div class="receipt-actions">
+                                              <a class="receipt-link receipt-download" href="${record.receiptDataUrl}" download="${record.receiptName || `${team.name}-receipt`}">
+                                                다운로드
+                                              </a>
+                                            </div>
+                                            <a href="${record.receiptDataUrl}" target="_blank" rel="noreferrer">
+                                              <img class="receipt-preview" src="${record.receiptDataUrl}" alt="${team.name} 영수증" />
+                                            </a>
+                                          `
+                                          : '<div class="mini">영수증 이미지 없음</div>'
+                                      }
+                                    </div>
+                                  `
+                                )
+                                .join("")
+                            : '<p class="mini">아직 입력된 회식비 내역이 없습니다.</p>'
+                        }
+                      </div>
+                    </div>
+                  `;
+                })
+                .join("")}
             </div>
           `
-          : '<p class="mini">먼저 자동 편성 탭에서 팀을 생성해 주세요.</p>'
+          : `
+            <div class="panel" style="margin-top:18px">
+              <h3>팀 편성 필요</h3>
+              <p class="mini">자동편성 탭에서 팀이 생성된 후 회식비를 입력할 수 있습니다.</p>
+            </div>
+          `
       }
     </section>
   `;
@@ -768,6 +823,7 @@ function bindVoteEvents() {
       state.votes[state.currentUserId] = [];
       delete state.submissions[state.currentUserId];
       state.teams = [];
+      state.expenses = {};
       state.dirty = true;
       await syncCurrentVote(false);
     });
@@ -781,6 +837,7 @@ function bindAssignmentEvents() {
       const result = autoAssignTeams();
       state.teams = result.teams;
       state.activeTeamCount = result.teamCount;
+      state.expenses = sanitizeExpenses(state.expenses, state.teams);
       state.dirty = true;
       await syncAssignments(false);
     });
@@ -790,49 +847,56 @@ function bindAssignmentEvents() {
   if (resetButton) {
     resetButton.addEventListener("click", async () => {
       state.teams = [];
+      state.expenses = {};
       state.activeTeamCount = 0;
-      state.selectedUserId = null;
       state.dirty = true;
       await syncAssignments(false);
     });
   }
 }
 
-function bindManualEvents() {
-  document.querySelectorAll("[data-pick-user]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.selectedUserId = button.dataset.pickUser;
-      render();
-    });
-  });
+function bindExpenseEvents() {
+  document.querySelectorAll("[data-add-expense]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const teamId = button.dataset.addExpense;
+      const amountInput = document.querySelector(`[data-expense-amount="${teamId}"]`);
+      const fileInput = document.querySelector(`[data-expense-receipt="${teamId}"]`);
+      const amount = Number(amountInput?.value || 0);
 
-  document.querySelectorAll("[data-add-to-team]").forEach((button) => {
-    button.addEventListener("click", () => {
-      if (!state.selectedUserId) {
+      if (!amount || amount <= 0) {
+        window.alert("사용 금액을 입력해 주세요.");
         return;
       }
 
-      const team = state.teams.find((entry) => entry.id === button.dataset.addToTeam);
-      state.teams.forEach((entry) => {
-        entry.memberIds = entry.memberIds.filter((memberId) => memberId !== state.selectedUserId);
-      });
-
-      if (team && !team.memberIds.includes(state.selectedUserId)) {
-        team.memberIds.push(state.selectedUserId);
+      let receiptDataUrl = "";
+      let receiptName = "";
+      if (fileInput?.files?.[0]) {
+        receiptName = fileInput.files[0].name;
+        receiptDataUrl = await readFileAsDataUrl(fileInput.files[0]);
       }
 
-      state.selectedUserId = null;
+      const record = {
+        id: `expense-${Date.now()}`,
+        amount,
+        receiptName,
+        receiptDataUrl,
+        createdAt: new Date().toISOString(),
+      };
+
+      state.expenses[teamId] = [...getTeamExpenseRecords(teamId), record];
       state.dirty = true;
-      render();
+      await syncAssignments(false);
     });
   });
 
-  const saveManualButton = document.getElementById("save-manual");
-  if (saveManualButton) {
-    saveManualButton.addEventListener("click", async () => {
-      await syncAssignments(true);
+  document.querySelectorAll("[data-delete-expense]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const [teamId, expenseId] = button.dataset.deleteExpense.split(":");
+      state.expenses[teamId] = getTeamExpenseRecords(teamId).filter((record) => record.id !== expenseId);
+      state.dirty = true;
+      await syncAssignments(false);
     });
-  }
+  });
 }
 
 function getSummary() {
@@ -900,6 +964,27 @@ function sanitizeTeams(teams) {
   return (teams || []).filter((team) => validSlotIds.has(team.slotId));
 }
 
+function sanitizeExpenses(expenses, teams) {
+  const validTeamIds = new Set((teams || []).map((team) => team.id));
+  return Object.fromEntries(
+    Object.entries(expenses || {})
+      .filter(([teamId]) => validTeamIds.has(teamId))
+      .map(([teamId, records]) => [
+        teamId,
+        (records || [])
+          .filter((record) => Number(record.amount) > 0)
+          .map((record) => ({
+            id: record.id || `expense-${Date.now()}`,
+            amount: Number(record.amount),
+            note: record.note || "",
+            receiptName: record.receiptName || "",
+            receiptDataUrl: record.receiptDataUrl || "",
+            createdAt: record.createdAt || new Date().toISOString(),
+          })),
+      ])
+  );
+}
+
 function slotDateValue(slotId) {
   const slot = state.slots.find((entry) => entry.id === slotId);
   if (!slot) {
@@ -965,11 +1050,9 @@ function getUnassignedSubmittedUsers() {
 }
 
 function chooseBestSlotCombination(candidateSlotIds, submittedUsers) {
-  const orderedCandidates = candidateSlotIds
-    .slice()
-    .sort((a, b) => slotDateValue(a) - slotDateValue(b));
-
+  const orderedCandidates = candidateSlotIds.slice().sort((a, b) => slotDateValue(a) - slotDateValue(b));
   const combos = [];
+
   for (let size = 1; size <= Math.min(4, orderedCandidates.length); size += 1) {
     buildCombinations(orderedCandidates, size, 0, [], combos);
   }
@@ -1007,9 +1090,7 @@ function buildCombinations(items, size, startIndex, current, output) {
 }
 
 function buildTeamsFromSlots(slotIds, submittedUsers) {
-  const orderedUsers = submittedUsers
-    .slice()
-    .sort((a, b) => submissionOrderValue(a.id) - submissionOrderValue(b.id));
+  const orderedUsers = submittedUsers.slice().sort((a, b) => submissionOrderValue(a.id) - submissionOrderValue(b.id));
   const teams = slotIds
     .slice()
     .sort((a, b) => slotDateValue(a) - slotDateValue(b))
@@ -1061,6 +1142,30 @@ function renderTeamCard(team) {
   `;
 }
 
+function getTeamExpenseRecords(teamId) {
+  return (state.expenses[teamId] || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function getTeamExpenseSummary(team) {
+  const teamBudget = team.memberIds.length * PER_PERSON_BUDGET;
+  const spent = getTeamExpenseRecords(team.id).reduce((total, record) => total + Number(record.amount || 0), 0);
+  return {
+    teamBudget,
+    spent,
+    remaining: teamBudget - spent,
+  };
+}
+
+function getOverallExpenseSummary() {
+  const totalBudget = state.users.length * PER_PERSON_BUDGET;
+  const totalSpent = Object.values(state.expenses).flat().reduce((total, record) => total + Number(record.amount || 0), 0);
+  return {
+    totalBudget,
+    totalSpent,
+    remaining: totalBudget - totalSpent,
+  };
+}
+
 function getCurrentUser() {
   return state.users.find((user) => user.id === state.currentUserId) || state.users[0];
 }
@@ -1097,6 +1202,10 @@ function formatDateTime(isoString) {
   ).padStart(2, "0")}`;
 }
 
+function formatCurrency(amount) {
+  return `${Math.round(amount).toLocaleString("ko-KR")}원`;
+}
+
 function weekdayLabel(dateString) {
   const date = new Date(`${dateString}T09:00:00`);
   return ["일", "월", "화", "수", "목", "금", "토"][date.getDay()] + "요일";
@@ -1104,4 +1213,13 @@ function weekdayLabel(dateString) {
 
 function userName(userId) {
   return state.users.find((user) => user.id === userId)?.name || userId;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("영수증 파일을 읽지 못했습니다."));
+    reader.readAsDataURL(file);
+  });
 }

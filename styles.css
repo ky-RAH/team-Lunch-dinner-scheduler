@@ -103,7 +103,7 @@ h1 {
 .summary-grid,
 .team-grid,
 .result-grid,
-.manual-grid {
+.expense-grid {
   display: grid;
   gap: 16px;
 }
@@ -245,8 +245,8 @@ button:hover,
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.manual-grid {
-  grid-template-columns: 0.8fr 1.2fr;
+.expense-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 label {
@@ -481,6 +481,109 @@ button.small {
   align-content: start;
 }
 
+.expense-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.team-inline-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.team-inline-summary strong {
+  margin-right: 4px;
+}
+
+.team-inline-summary span {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.expense-summary-stack {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compact-summary-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.compact-summary-row strong {
+  margin-bottom: 0;
+}
+
+.compact-summary-row span {
+  font-weight: 600;
+}
+
+.expense-entry-form {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px dashed var(--line);
+}
+
+.expense-records {
+  display: grid;
+  gap: 10px;
+}
+
+.expense-record {
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.expense-record-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.receipt-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.receipt-link {
+  display: inline-block;
+  color: var(--brand-deep);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.receipt-download {
+  color: var(--accent);
+}
+
+.receipt-preview {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  margin-top: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: white;
+}
+
 .allocation-controls {
   display: flex;
   gap: 8px;
@@ -503,7 +606,7 @@ button.small {
   .hero,
   .admin-layout,
   .final-layout,
-  .manual-grid {
+  .expense-grid {
     grid-template-columns: 1fr;
   }
 
@@ -530,7 +633,8 @@ button.small {
   .summary-grid,
   .team-grid,
   .result-grid,
-  .hero-stats {
+  .hero-stats,
+  .expense-summary-stack {
     grid-template-columns: 1fr;
   }
 
